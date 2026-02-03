@@ -1,0 +1,3 @@
+Crawl with goroutine
+Total time: 2m7.438270453s
+Crawl normal: Total time: 24m6.744916835s
