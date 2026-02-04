@@ -28,12 +28,6 @@ type CrawlService struct {
 	mu        sync.RWMutex
 }
 
-// ... CrawlProgress struct ...
-
-// Đảm bảo CrawlService implement Crawler interface
-var _ Crawler = (*CrawlService)(nil)
-
-// ... (previous code)
 
 func NewCrawlService(repo repository.HashRepository, cfg *config.CrawlConfig) Crawler {
 	return &CrawlService{repo: repo, cfg: cfg}
@@ -76,7 +70,6 @@ func (s *CrawlService) doCrawlAndImport() {
 	s.progress.Total = s.cfg.MaxFiles + 1
 	s.mu.Unlock()
 
-	var wg sync.WaitGroup
 	sem := make(chan struct{}, s.cfg.MaxConcurrent)
 	var downloaded int32
 
@@ -92,11 +85,9 @@ func (s *CrawlService) doCrawlAndImport() {
 			continue
 		}
 
-		wg.Add(1)
 		sem <- struct{}{}
 
 		go func(fileName, filePath string) {
-			defer wg.Done()
 			defer func() { <-sem }()
 
 			s.mu.Lock()
@@ -119,9 +110,10 @@ func (s *CrawlService) doCrawlAndImport() {
 			s.mu.Lock()
 			s.progress.Current = int(atomic.LoadInt32(&downloaded))
 			s.mu.Unlock()
+			fmt.Println("downloaded", fileName)
 		}(name, path)
 	}
-	wg.Wait()
+	fmt.Println("import")
 
 	s.mu.Lock()
 	s.progress.Phase = "importing"

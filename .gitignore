@@ -12,7 +12,7 @@
 
 # Data files
 /data/
-
+/scripts/
 # IDE
 .idea/
 .vscode/
