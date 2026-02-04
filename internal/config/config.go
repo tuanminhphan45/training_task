@@ -32,11 +32,12 @@ type ServerConfig struct {
 }
 
 type CrawlConfig struct {
-	BaseURL       string
-	MaxFiles      int
-	MaxConcurrent int
-	BatchSize     int
-	OutDir        string
+	BaseURL          string
+	MaxFiles         int
+	MaxConcurrent    int
+	MaxImportWorkers int
+	BatchSize        int
+	OutDir           string
 }
 
 func Load() *Config {
@@ -59,11 +60,12 @@ func Load() *Config {
 			Port: getEnv("SERVER_PORT", "8080"),
 		},
 		Crawl: CrawlConfig{
-			BaseURL:       getEnv("CRAWL_BASE_URL", "https://virusshare.com/hashfiles/"),
-			MaxFiles:      getEnvInt("CRAWL_MAX_FILES", 499),
-			MaxConcurrent: getEnvInt("CRAWL_MAX_CONCURRENT", 50),
-			BatchSize:     getEnvInt("CRAWL_BATCH_SIZE", 1000),
-			OutDir:        getEnv("CRAWL_OUT_DIR", "data/hashfiles"),
+			BaseURL:          getEnv("CRAWL_BASE_URL", "https://virusshare.com/hashfiles/"),
+			MaxFiles:         getEnvInt("CRAWL_MAX_FILES", 499),
+			MaxConcurrent:    getEnvInt("CRAWL_MAX_CONCURRENT", 100),
+			MaxImportWorkers: getEnvInt("CRAWL_MAX_IMPORT_WORKERS", 20),
+			BatchSize:        getEnvInt("CRAWL_BATCH_SIZE", 1000),
+			OutDir:           getEnv("CRAWL_OUT_DIR", "data/hashfiles"),
 		},
 	}
 }

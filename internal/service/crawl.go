@@ -20,14 +20,12 @@ import (
 )
 
 type CrawlService struct {
-	repo repository.HashRepository
-	cfg  *config.CrawlConfig
-
+	repo      repository.HashRepository
+	cfg       *config.CrawlConfig
 	importing bool
 	progress  CrawlProgress
 	mu        sync.RWMutex
 }
-
 
 func NewCrawlService(repo repository.HashRepository, cfg *config.CrawlConfig) Crawler {
 	return &CrawlService{repo: repo, cfg: cfg}
@@ -66,81 +64,101 @@ func (s *CrawlService) doCrawlAndImport() {
 	os.MkdirAll(s.cfg.OutDir, 0755)
 
 	s.mu.Lock()
-	s.progress.Phase = "downloading"
+	s.progress.Phase = "processing"
 	s.progress.Total = s.cfg.MaxFiles + 1
 	s.mu.Unlock()
 
+	downloadedCh := make(chan string, s.cfg.MaxConcurrent)
+	md5Pattern := regexp.MustCompile(`^[a-fA-F0-9]{32}$`)
+
+	var wg sync.WaitGroup
 	sem := make(chan struct{}, s.cfg.MaxConcurrent)
 	var downloaded int32
-
-	for i := 0; i <= s.cfg.MaxFiles; i++ {
-		name := fmt.Sprintf("VirusShare_%05d.md5", i)
-		path := filepath.Join(s.cfg.OutDir, name)
-
-		if _, err := os.Stat(path); err == nil {
-			atomic.AddInt32(&downloaded, 1)
-			s.mu.Lock()
-			s.progress.Current = int(atomic.LoadInt32(&downloaded))
-			s.mu.Unlock()
-			continue
-		}
-
-		sem <- struct{}{}
-
-		go func(fileName, filePath string) {
-			defer func() { <-sem }()
-
-			s.mu.Lock()
-			s.progress.CurrentFile = fileName
-			s.mu.Unlock()
-
-			resp, err := http.Get(s.cfg.BaseURL + fileName)
-			if err != nil || resp.StatusCode != 200 {
-				if resp != nil {
-					resp.Body.Close()
-				}
-				return
-			}
-			defer resp.Body.Close()
-
-			body, _ := io.ReadAll(resp.Body)
-			os.WriteFile(filePath, body, 0644)
-
-			atomic.AddInt32(&downloaded, 1)
-			s.mu.Lock()
-			s.progress.Current = int(atomic.LoadInt32(&downloaded))
-			s.mu.Unlock()
-			fmt.Println("downloaded", fileName)
-		}(name, path)
-	}
-	fmt.Println("import")
-
-	s.mu.Lock()
-	s.progress.Phase = "importing"
-	s.progress.Current = 0
-	s.mu.Unlock()
-
-	files, _ := filepath.Glob(filepath.Join(s.cfg.OutDir, "*.md5"))
-	s.mu.Lock()
-	s.progress.Total = len(files)
-	s.mu.Unlock()
-
-	md5Pattern := regexp.MustCompile(`^[a-fA-F0-9]{32}$`)
 	var totalImported int64
 
-	for i, filePath := range files {
-		s.mu.Lock()
-		s.progress.Current = i + 1
-		s.progress.CurrentFile = filepath.Base(filePath)
-		s.mu.Unlock()
+	go func() {
+		defer close(downloadedCh)
 
-		imported := s.importFile(filePath, md5Pattern)
-		atomic.AddInt64(&totalImported, imported)
+		for i := 0; i <= s.cfg.MaxFiles; i++ {
+			name := fmt.Sprintf("VirusShare_%05d.md5", i)
+			path := filepath.Join(s.cfg.OutDir, name)
 
-		s.mu.Lock()
-		s.progress.Imported = atomic.LoadInt64(&totalImported)
-		s.mu.Unlock()
+			if _, err := os.Stat(path); err == nil {
+				atomic.AddInt32(&downloaded, 1)
+				s.mu.Lock()
+				s.progress.Current = int(atomic.LoadInt32(&downloaded))
+				s.mu.Unlock()
+				downloadedCh <- path
+				continue
+			}
+
+			wg.Add(1)
+			sem <- struct{}{}
+
+			go func(fileName, filePath string) {
+				defer wg.Done()
+				defer func() { <-sem }()
+
+				s.mu.Lock()
+				s.progress.CurrentFile = fileName
+				s.mu.Unlock()
+
+				url := fmt.Sprintf("%s%s", s.cfg.BaseURL, fileName)
+				resp, err := http.Get(url)
+				if err != nil || resp.StatusCode != 200 {
+					if resp != nil {
+						resp.Body.Close()
+					}
+					return
+				}
+				defer resp.Body.Close()
+
+				out, err := os.Create(filePath)
+				if err != nil {
+					return
+				}
+				_, err = io.Copy(out, resp.Body)
+				out.Close()
+				if err != nil {
+					os.Remove(filePath)
+					return
+				}
+
+				atomic.AddInt32(&downloaded, 1)
+				s.mu.Lock()
+				s.progress.Current = int(atomic.LoadInt32(&downloaded))
+				s.mu.Unlock()
+
+				downloadedCh <- filePath
+			}(name, path)
+		}
+
+		wg.Wait()
+	}()
+
+	numImportWorkers := s.cfg.MaxImportWorkers
+	var importWg sync.WaitGroup
+
+	for i := 0; i < numImportWorkers; i++ {
+		importWg.Add(1)
+		go func(workerID int) {
+			defer importWg.Done()
+			for filePath := range downloadedCh {
+				s.mu.Lock()
+				s.progress.CurrentFile = filepath.Base(filePath) + " (importing)"
+				s.mu.Unlock()
+
+				imported := s.importFile(filePath, md5Pattern)
+				atomic.AddInt64(&totalImported, imported)
+
+				s.mu.Lock()
+				s.progress.Imported = atomic.LoadInt64(&totalImported)
+				s.mu.Unlock()
+			}
+		}(i)
 	}
+
+	importWg.Wait()
 }
 
 func (s *CrawlService) importFile(filePath string, md5Pattern *regexp.Regexp) int64 {
