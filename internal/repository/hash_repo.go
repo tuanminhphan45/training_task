@@ -12,6 +12,8 @@ type hashRepo struct {
 	db *bun.DB
 }
 
+var _ HashRepository = (*hashRepo)(nil)
+
 func NewHashRepository(db *bun.DB) HashRepository {
 	return &hashRepo{db: db}
 }

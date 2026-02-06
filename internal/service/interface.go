@@ -13,3 +13,4 @@ type CrawlProgress struct {
 	Imported    int64  `json:"imported"`
 	CurrentFile string `json:"current_file"`
 }
+
